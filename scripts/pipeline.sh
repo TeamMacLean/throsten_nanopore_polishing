@@ -1,4 +1,5 @@
 #!/bin/bash
+# usage : bash pipeline.sh samplename nanopore_reads assembly R1 R2
 
 source minimap2-2.13
 source racon-1.2.0
@@ -9,13 +10,14 @@ nanopore_reads=$2
 nanopore_assembly=$3
 illumina_reads_1=$4
 illumina_reads_2=$5
-
+R3=$6
+R4=$7
 
 mkdir -p results/${sample}
 
 if test ! -e results/${sample}/minimap2_nanopore_overlap1.sam.gz; then
         echo "Running minimap2 round 1"
-        minimap2 -a -x ava-ont -t 32 ${nanopore_assembly} ${nanopore_reads} > results/${sample}/minimap2_nanopore_overlap1.sam; gzip results/${sample}/minimap2_nanopore_overlap1.sam.gz
+        minimap2 -a -x ava-ont -t 32 ${nanopore_assembly} ${nanopore_reads} | gzip > results/${sample}/minimap2_nanopore_overlap1.sam.gz
 		echo "*** Minimap2 overlap round 1 completed ***"
 else
         echo "*** Minimap2 overlap round 1 has already completed ***"
@@ -33,7 +35,7 @@ echo "*** generating overlap information after round 1 racon ***"
 
 if test ! -e results/${sample}/minimap2_nanopore_overlap2.sam.gz && test results/${sample}/racon_round1_output.fasta -nt results/${sample}/minimap2_nanopore_overlap2.sam.gz; then
         echo Running minimap2 round 2
-        minimap2 -a -x ava-ont -t 32 results/${sample}/racon_round1_output.fasta ${nanopore_reads}  > results/${sample}/minimap2_nanopore_overlap2.sam; gzip results/${sample}/minimap2_nanopore_overlap2.sam.gz
+        minimap2 -a -x ava-ont -t 32 results/${sample}/racon_round1_output.fasta ${nanopore_reads}  | gzip > results/${sample}/minimap2_nanopore_overlap2.sam.gz
 		echo "*** Minimap2 overlap round 2 completed ***"
 else
         echo "*** Minimap2 overlap round 2 has already completed ***"
@@ -82,17 +84,27 @@ if test ! -e $raconfile; then
 fi
 
 
-if [ "$illumina_reads_2" == "" ]; then
+if [ "$illumina_reads_2" == "" && "$R3" == "" ]; then
 	if test ! -e result/${sample}/illumina_aligned_to_assembly_sorted.bam; then
-        bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/$raconfile -U $illumina_reads_1 | samtools view -b  | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam
+        	bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/$raconfile -U $illumina_reads_1 $illumin_reads_2 $R3 $R4| samtools view -b  | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam
 	else
 		echo "*** bowtie has already completed***"
 	fi
-	if test ! -e results/${sample}/${sample}_pilcon_polished; then
-		pilon --genome results/${sample}/$raconfile --unpaired results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam --outdir results/${sample} --output ${sample}_pilcon_polished --changes --threads 16
-    else
-		echo "*** Pilcon has already completed ***"
+
+	if test ! -e results/${sample}/${sample}_pilon_polished_round1.fasta; then
+		pilon --genome results/${sample}/$raconfile --unpaired results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam --outdir results/${sample} --output ${sample}_pilon_polished_round1.fasta --changes --threads 16
+   	 else
+		echo "*** Pilcon round 1 has already completed ***"
 	fi
+
+	# round 2 pilon polishing
+
+	if test ! -e results/${sample}_pilon_polished_round2.fasta; then
+		bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}_pilon_polished_round1.fasta -U $illumina_reads_1 $illumina_reads_2 $R3 $R4| samtools view -b  | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam
+		echo "running second round of pilon"
+		pilon --genome results/${sample}/${sample}_pilon_polished_round1.fasta --unpaired results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam --outdir results/${sample} --output ${sample}_pilon_polished_round2.fasta -changes --threads 16
+	fi
+
 else
 	if test ! -e results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; then
 		bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/$raconfile  -1 $illumina_reads_1 -2 $illumina_reads_2 | samtools view -b  | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam;
@@ -100,9 +112,17 @@ else
 		echo "*** Bowtie has already completed ***"
 	fi
 
-	if test ! -e results/${sample}/${sample}_pilcon_polished; then
-		pilon --genome results/${sample}/$raconfile --frags results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam --outdir results/${sample} --output ${sample}_pilcon_polished --changes --threads 16
+	if test ! -e results/${sample}/${sample}_pilon_polished_round1.fasta; then
+		pilon --genome results/${sample}/$raconfile --frags results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam --outdir results/${sample} --output ${sample}_pilon_polished_round1.fasta --changes --threads 16
 	else
-		echo "*** Pilcon has already completed ***"
-    fi
+		echo "*** Pilcon round 1 has already completed ***"
+    	fi
+	# round 2 pilon polishing
+
+	if test ! -e results/${sample}_pilon_polished_round2.fasta; then
+		bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/${sample}_pilon_polished_round1.fasta  -1 $illumina_reads_1 -2 $illumina_reads_2 | samtools view -b  | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam;
+		echo "running second round of pilon"
+		pilon --genome results/${sample}/results/${sample}/${sample}_pilon_polished_round1.fasta --frags results/${sample}/illumina_aligned_to_assembly_sorted2.sorted.bam --outdir results/${sample} --output ${sample}_pilon_polished_round2.fasta --changes --threads 16
+	fi
+
 fi
