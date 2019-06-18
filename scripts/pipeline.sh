@@ -2,7 +2,7 @@
 # usage : bash pipeline.sh samplename nanopore_reads assembly R1 R2
 
 source minimap2-2.13
-source racon-1.2.0
+source racon-1.3.2
 cd /tsl/scratch/shrestha/thorsten_nanopre_assembly_polishing
 
 sample=$1
@@ -23,9 +23,10 @@ else
         echo "*** Minimap2 overlap round 1 has already completed ***"
 fi
 
-if test ! -e results/${sample}/racon_round1_output.fasta ||  test results/${sample}/minimap2_nanopore_overlap1.sam.gz -nt results/${sample}/racon_round1_output.fasta || test ! -s  results/${sample}/racon_round1_output.fasta; then
+if test ! -e results/${sample}/racon_round1_output.fasta ; then
         echo "Running racon round 1"
         racon --threads 32 --include-unpolished  ${nanopore_reads} results/${sample}/minimap2_nanopore_overlap1.sam.gz ${nanopore_assembly} > results/${sample}/racon_round1_output.fasta
+
 	echo "*** Racon round 1 polishing completed ***"
 else
         echo "*** Racon round 1 polishing has already completed ***"
@@ -71,7 +72,7 @@ fi
 
 ## next step map illumina reads to Nanopore polished assembly from above steps
 
-source bowtie2-2.2.9
+source bowtie2-2.3.5
 source pilon-1.22
 source samtools-1.9
 
@@ -81,6 +82,13 @@ function bowtiebuild(){
     	echo "*** bowtie2 build completed***"
     fi
 }
+
+function run-pilon(){
+    if [ ! -e ${3}/${4}.fasta ]; then
+        pilon --genome $1 --frags $2 --outdir $3 --output $4 --changes --threads 16
+    fi
+}
+
 echo "*** running bowtie and pilon ***"
 
 raconfile=racon_round2_output.fasta
@@ -90,15 +98,17 @@ raconfile=racon_round2_output.fasta
 if [[ "$sample" == "FR13" || "$sample" == "US71" || "$sample" == "BR32" ]]; then
     echo "Running bowtie pilon for $sample"
     if test ! -e result/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; then
+        bowtiebuild results/${sample}/$raconfile
         echo "bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/$raconfile -U $illumina_reads_1 -S results/${sample}/illumina_aligned_to_assembly1.sam"
-        cmd="bowtie2 --threads 8 --qc-filter --no-unal -x results/${sample}/$raconfile -U $illumina_reads_1 -S results/${sample}/illumina_aligned_to_assembly1.sam ; samtools view -b results/${sample}/illumina_aligned_to_assembly1.sam | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam"
-        $cmd
+        bowtie2 --threads 2 --qc-filter --no-unal -x results/${sample}/$raconfile -U $illumina_reads_1 -S results/${sample}/illumina_aligned_to_assembly1.sam ; samtools view -b results/${sample}/illumina_aligned_to_assembly1.sam | samtools sort -o results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam; samtools index results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam
+
     else
         echo "*** bowtie has already completed***"
     fi
 
     if test ! -e results/${sample}/${sample}_pilon_polished_round1.fasta; then
-        pilon results/${sample}/$raconfile results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam results/${sample} ${sample}_pilon_polished_round1
+        echo "Running pilon round 1"
+        run-pilon results/${sample}/$raconfile results/${sample}/illumina_aligned_to_assembly_sorted.sorted.bam results/${sample} ${sample}_pilon_polished_round1
 
    	 else
 		echo "*** Pilcon round 1 has already completed ***"
@@ -165,9 +175,3 @@ else
 	fi
 
 fi
-
-function run-pilon(){
-    if [ ! -e ${$3}/${4}.fasta ]; then
-        pilon --genome $1 --frags $2 --outdir $3 --output $4 --changes --threads 16
-    fi
-}
